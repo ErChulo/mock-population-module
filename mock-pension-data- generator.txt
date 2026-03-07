@@ -1,0 +1,224 @@
+You are Codex Command Line Interface. Build a mock data generation module for a Pension Benefit Guaranty Corporation case workbench suite.
+
+Repository: caseworkbench-mockgen
+Language: TypeScript (strict), Node.js 20+
+Package manager: pnpm (workspace)
+Determinism: all outputs reproducible given the same seed
+No personal identifying information: never generate real names, addresses, identifiers, phone numbers, email addresses, or Social Security numbers; use synthetic tokens.
+
+GLOBAL VERSIONING (HARD RULES)
+- Keep a single version constant in /packages/core/src/version.ts named GENERATOR_VERSION.
+- Every milestone below increments semantic version and is recorded in CHANGELOG.md.
+- metadata.json MUST include:
+  - GENERATOR_VERSION
+  - seed
+  - a SHA256 for every produced artifact
+- Do not start a later milestone until current milestone acceptance checks pass.
+
+PROJECT INPUTS (EVENTUAL TARGET, BUILT IN PHASES)
+1) DD.csv (data dictionary) as input
+2) nonempty.json (available non-empty fields) as input
+3) JSON Schema files to validate and impose business rules for:
+   A) the nonempty.json input
+   B) the generated output dataset
+4) A mock data engine (choose the best option for maintainability; default to @faker-js/faker as primitives)
+
+OUTPUT FORMATS (PHASED)
+- v0.7.x: comma separated values (CSV) only
+- v0.9.x: tab separated values (TSV) + spreadsheet (XLSX) + structured query language (SQL)
+- v1.0.x: SQLite database (.db) + plain text report (TXT)
+- RData/RDA and Microsoft Access database (ACCDB) are optional and must NOT block v1.0.0; provide import instructions instead.
+
+================================================================================
+MILESTONE PLAN (SMALL, TESTABLE, LINEAR)
+================================================================================
+
+---------------------------
+v0.7.0 — Repository scaffold
+---------------------------
+Deliverables to commit:
+- pnpm workspace layout:
+  - /packages/core
+  - /packages/cli
+  - /packages/schemas
+  - /packages/examples
+- TypeScript configs, linting, testing framework (vitest or jest)
+- CHANGELOG.md with initial entry
+- /packages/core/src/version.ts with GENERATOR_VERSION="0.7.0"
+
+Acceptance:
+- pnpm install succeeds
+- pnpm test runs (even if only a placeholder test)
+
+---------------------------
+v0.7.1 — Schemas (initial)
+---------------------------
+Add JSON Schema (2020-12) files in /packages/schemas:
+- FieldCatalog.schema.json
+- NonEmptyFields.schema.json
+- GeneratorConfig.schema.json
+- GeneratedPopulation.schema.json (minimal for now)
+
+Define minimal structures:
+- FieldCatalog: list of fields with name + optional inferred type + optional description
+- NonEmptyFields: array of field names + optional ordering rules
+- GeneratorConfig: seed + rowCount + scenarioMix + planTerminationDate (yyyy-mm-dd) + requiredBeginningAge + normalRetirementAge + planYearStartMonthDay + benefitFreezeDate optional
+- GeneratedPopulation: array of records with keys constrained to the provided non-empty field list (enforced in code for v0.7.x)
+
+Acceptance:
+- Schema files exist and validate as JSON
+- Add a unit test that loads schemas and compiles them with AJV
+
+---------------------------
+v0.7.2 — DD.csv parser + FieldCatalog builder
+---------------------------
+Implement in /packages/core:
+- parseDDCsv(pathOrBytes) -> FieldCatalog
+- type inference heuristic if DD.csv does not include types (document in README)
+- validate FieldCatalog using FieldCatalog.schema.json via AJV
+
+Acceptance:
+- Unit test using an example DD.csv subset in /packages/examples
+- Parsing produces a deterministic FieldCatalog
+- AJV validation passes
+
+---------------------------
+v0.7.3 — nonempty.json validator
+---------------------------
+Implement in /packages/core:
+- validateNonEmptyFields(nonempty.json) using NonEmptyFields.schema.json
+- Business rule: every field in nonempty.json must exist in FieldCatalog, else fail
+
+Acceptance:
+- Unit tests:
+  - passes for valid nonempty.json
+  - fails for unknown fields
+  - fails for duplicates
+
+---------------------------
+v0.7.4 — Core generator (clean dataset, CSV only)
+---------------------------
+Engine choice:
+- Use @faker-js/faker as the primitive engine (seeded).
+- Implement your own small domain generator (do not use mock.js).
+
+Implement:
+- generateCleanPopulation(FieldCatalog, nonEmptyFields, GeneratorConfig) -> records[]
+- Output includes ONLY fields listed in nonempty.json, in that order.
+- Dates output as text yyyy-mm-dd.
+- ID and RETSTAT are text.
+- Synthetic tokens for identity fields (Cust_ID, BCV_REC_ID, names). Do not generate real names.
+
+Minimum scenarios (configurable with scenarioMix):
+- participant_in_pay: ID="1", RETSTAT="1", DOR present, LEV_MB_ARD present (if those fields exist in nonempty list)
+- participant_deferred_vested: ID="1", RETSTAT="2", PA_AMB present (if exists)
+- participant_active_vested: ID="1", RETSTAT="3", PA_AMB present (if exists)
+- participant_not_vested: ID="1", RETSTAT="4"
+- beneficiary_in_pay: ID="2", SBCD present, LEV_MB_ARD present (if exist)
+- alternate_payee_in_pay: ID="4", LEV_MB_ARD present (if exists)
+- de_minimis_lump_sum: ID="1", LS_EST_AMT>0, LS_EST_DATE present (if exist)
+- excluded: RETSTAT="5"
+
+Clean invariants (enforce in code when fields exist):
+- if DOB and DOH exist: DOB < DOH
+- if DOH and DOP exist: DOH <= DOP
+- if DOTE exists: DOP <= DOTE
+- if ID="1" and RETSTAT="1": DOR present if DOR is in nonempty list
+- if ID="2": SBCD present if SBCD is in nonempty list; DOR blank if DOR is in nonempty list
+- if DOD and DOR exist and both present: DOR < DOD
+- if MSTAT="M": spouse fields present (SFNAME, SLNAME, SDOB) if those fields exist in nonempty list
+
+Output:
+- population.clean.csv
+
+Acceptance:
+- Determinism test: same inputs + seed => identical CSV bytes and SHA256
+- Invariant tests: clean output passes all enforced invariants
+
+---------------------------
+v0.7.5 — Dirty injection (CSV only)
+---------------------------
+Implement:
+- generateDirtyPopulation(...) that starts from clean data and injects controlled issues.
+- Dirty injection model in config: rates and enabled issue types.
+Minimum issue types (only inject if required fields exist in nonempty list):
+- married missing SDOB (when MSTAT="M" and SDOB field exists)
+- DOR earlier than DOTE (when both fields exist)
+- beneficiary has DOR populated (when ID="2" and DOR exists)
+- payable record missing FORM_CODE_ARD (when FORM_CODE_ARD exists)
+
+Output:
+- population.dirty.csv
+
+Acceptance:
+- Dirty injection counts match config within tolerance
+- metadata of injected issues is produced in memory (written in next milestone)
+
+---------------------------
+v0.7.6 — metadata.json + hashing
+---------------------------
+Write metadata.json including:
+- generatorVersion
+- seed
+- input file hashes (DD.csv, nonempty.json, config.json)
+- output file hashes (population.clean.csv, population.dirty.csv)
+- row counts and scenario counts
+- injected issue counts and list of affected Cust_ID values
+
+Acceptance:
+- metadata.json is deterministic
+- hashes match actual written artifacts
+
+---------------------------
+v0.7.7 — Command line interface (CSV only)
+---------------------------
+Implement /packages/cli:
+- caseworkbench-mockgen generate --dd DD.csv --nonempty nonempty.json --config config.json --outdir out/ --seed 12345
+Writes:
+- population.clean.csv
+- population.dirty.csv
+- metadata.json
+
+Acceptance:
+- End-to-end test that runs CLI against /packages/examples and validates outputs and hashes
+
+---------------------------
+v0.7.8 — Minimal browser demo (optional for v0.7.x; do not block)
+---------------------------
+If time permits:
+- /packages/web (Vite + TypeScript) client-side:
+  - upload DD.csv + nonempty.json + config.json
+  - generate clean+dirty+metadata
+  - download as zip
+If not implemented, defer to v1.0.x.
+
+Acceptance:
+- Web output matches CLI output for same inputs and seed (byte-for-byte CSV and metadata)
+
+================================================================================
+NEXT PHASES (ONLY AFTER v0.7.7 PASSES)
+================================================================================
+
+v0.8.0 — Realistic missingness model (clean still must satisfy required fields)
+- missingnessModel in config
+- expand schemas for enums and formats
+- tests for missingness behavior
+
+v0.9.0 — Export formats phase 1
+- TSV export
+- XLSX export
+- SQL export (CREATE TABLE + INSERT)
+- hashes in metadata for each format
+
+v1.0.0 — Export formats phase 2 + web demo required
+- SQLite (.db) export
+- TXT summary report
+- Web demo required (client-side)
+- RData/RDA and ACCDB are optional: provide import instructions and a conversion script if direct export is not implemented
+
+IMPORTANT IMPLEMENTATION RULE
+- Implement only one milestone at a time, in order.
+- Each milestone must add tests that prove acceptance criteria.
+- Do not change earlier milestone behavior without updating tests and CHANGELOG.
+
+BEGIN WITH v0.7.0 NOW.
