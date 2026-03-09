@@ -1,0 +1,14 @@
+{
+  "name": "@caseworkbench/cli",
+  "version": "1.0.0",
+  "private": true,
+  "bin": {
+    "caseworkbench-mockgen": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@caseworkbench/core": "workspace:*"
+  }
+}

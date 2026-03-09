@@ -1,0 +1,45 @@
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  background: linear-gradient(135deg, #f3f0e8 0%, #dbe8f3 100%);
+  color: #1c2430;
+}
+
+.app {
+  max-width: 820px;
+  margin: 2rem auto;
+  padding: 1rem;
+}
+
+.panel {
+  display: grid;
+  gap: 0.8rem;
+  background: #ffffffd0;
+  border: 1px solid #c8d6e5;
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+label {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.95rem;
+}
+
+button {
+  padding: 0.7rem 0.9rem;
+  background: #0e4c92;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.status {
+  margin-top: 1rem;
+  background: #101820;
+  color: #e6f0ff;
+  padding: 0.8rem;
+  border-radius: 8px;
+  min-height: 3rem;
+}

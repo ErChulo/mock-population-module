@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://caseworkbench.dev/schemas/GeneratedPopulation.schema.json",
+  "title": "GeneratedPopulation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["records"],
+  "properties": {
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "propertyNames": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "additionalProperties": {
+          "type": ["string", "number", "boolean", "null"]
+        }
+      }
+    }
+  }
+}

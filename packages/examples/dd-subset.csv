@@ -1,0 +1,7 @@
+FieldName,Type,Description
+Cust_ID,varchar,Synthetic participant token
+DOB,,Date of birth
+DOH,,Date of hire
+PA_AMB,decimal,Payable annual amount
+MSTAT,,Marital status indicator
+BEN_CNT,int,Beneficiary count

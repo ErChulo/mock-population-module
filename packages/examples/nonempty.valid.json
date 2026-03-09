@@ -1,0 +1,6 @@
+{
+  "fields": ["Cust_ID", "DOB", "PA_AMB"],
+  "orderingRules": {
+    "preserveInputOrder": true
+  }
+}

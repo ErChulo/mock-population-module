@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://caseworkbench.dev/schemas/GeneratorConfig.schema.json",
+  "title": "GeneratorConfig",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "seed",
+    "rowCount",
+    "scenarioMix",
+    "planTerminationDate",
+    "requiredBeginningAge",
+    "normalRetirementAge",
+    "planYearStartMonthDay"
+  ],
+  "properties": {
+    "seed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "rowCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "scenarioMix": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "enum": [
+          "participant_in_pay",
+          "participant_deferred_vested",
+          "participant_active_vested",
+          "participant_not_vested",
+          "beneficiary_in_pay",
+          "alternate_payee_in_pay",
+          "de_minimis_lump_sum",
+          "excluded"
+        ]
+      },
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    "planTerminationDate": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "requiredBeginningAge": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 130
+    },
+    "normalRetirementAge": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 130
+    },
+    "planYearStartMonthDay": {
+      "type": "string",
+      "pattern": "^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    },
+    "benefitFreezeDate": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "missingnessModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "defaultRate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "fieldRates": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "requiredFields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

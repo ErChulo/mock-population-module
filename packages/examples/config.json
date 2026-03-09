@@ -1,0 +1,27 @@
+{
+  "seed": 12345,
+  "rowCount": 40,
+  "scenarioMix": {
+    "participant_in_pay": 0.25,
+    "participant_deferred_vested": 0.15,
+    "participant_active_vested": 0.15,
+    "participant_not_vested": 0.1,
+    "beneficiary_in_pay": 0.1,
+    "alternate_payee_in_pay": 0.1,
+    "de_minimis_lump_sum": 0.1,
+    "excluded": 0.05
+  },
+  "planTerminationDate": "2026-12-31",
+  "requiredBeginningAge": 73,
+  "normalRetirementAge": 65,
+  "planYearStartMonthDay": "01-01",
+  "dirtyInjection": {
+    "rates": {
+      "married_missing_sdob": 0.1,
+      "dor_earlier_than_dote": 0.1,
+      "beneficiary_has_dor": 0.25,
+      "payable_missing_form_code_ard": 0.2
+    },
+    "tolerance": 1
+  }
+}

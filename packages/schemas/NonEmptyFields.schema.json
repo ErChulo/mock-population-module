@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://caseworkbench.dev/schemas/NonEmptyFields.schema.json",
+  "title": "NonEmptyFields",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fields"],
+  "properties": {
+    "fields": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "orderingRules": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preserveInputOrder": {
+          "type": "boolean"
+        },
+        "customOrder": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
