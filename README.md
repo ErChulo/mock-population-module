@@ -261,6 +261,29 @@ Optionally override seed, then download ZIP containing:
 - `population.dirty.csv`
 - `metadata.json`
 
+## Single-File Offline Page (No Install, No Server)
+
+If you cannot install Node or run a local server, use:
+
+- `single-page-generator.html`
+
+Open it directly in your browser, upload:
+
+- `DD.csv`
+- `nonempty.json`
+- `config.json`
+
+It generates direct downloads for:
+
+- `population.clean.csv`
+- `population.dirty.csv`
+- `population.clean.tsv`
+- `population.dirty.tsv`
+- `population.clean.sql`
+- `population.dirty.sql`
+- `summary.txt`
+- `metadata.json`
+
 ## Optional RData / ACCDB Conversion
 
 Direct export is intentionally optional and non-blocking.
