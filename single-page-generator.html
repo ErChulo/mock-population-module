@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mock Population Generator - Single File</title>
+  <style>
+    body { font-family: Segoe UI, Tahoma, sans-serif; margin: 0; background: #f0f4f8; color: #14202b; }
+    main { max-width: 980px; margin: 24px auto; padding: 16px; }
+    .card { background: #fff; border: 1px solid #c9d4de; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+    h1 { margin-top: 0; }
+    label { display: block; margin: 8px 0; font-size: 14px; }
+    input[type="file"], input[type="number"] { margin-top: 4px; }
+    button { padding: 10px 14px; border: 0; border-radius: 8px; background: #114b85; color: #fff; cursor: pointer; }
+    pre { background: #0f1720; color: #d4e3f3; padding: 12px; border-radius: 8px; overflow: auto; }
+    .files a { display: block; margin: 6px 0; color: #114b85; text-decoration: none; }
+    .note { font-size: 12px; color: #3e4f5e; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Mock Population Generator (Single HTML)</h1>
+  <div class="card">
+    <label>DD.csv <input id="dd" type="file" accept=".csv,text/csv" /></label>
+    <label>nonempty.json <input id="nonempty" type="file" accept=".json,application/json" /></label>
+    <label>config.json <input id="config" type="file" accept=".json,application/json" /></label>
+    <label>Seed override (optional) <input id="seed" type="number" min="0" step="1" /></label>
+    <button id="run">Generate Files</button>
+    <p class="note">No install. No server. Open this file directly in browser.</p>
+    <p class="note">This offline page outputs CSV/TSV/SQL/TXT/metadata. (XLSX/SQLite require extra libraries not embedded.)</p>
+  </div>
+
+  <div class="card">
+    <h3>Downloads</h3>
+    <div id="files" class="files"></div>
+  </div>
+
+  <div class="card">
+    <h3>Status</h3>
+    <pre id="status">Idle.</pre>
+  </div>
+</main>
+
+<script>
+const VERSION = "1.0.0";
+const scenarios = [
+  "participant_in_pay",
+  "participant_deferred_vested",
+  "participant_active_vested",
+  "participant_not_vested",
+  "beneficiary_in_pay",
+  "alternate_payee_in_pay",
+  "de_minimis_lump_sum",
+  "excluded"
+];
+
+document.getElementById("run").addEventListener("click", async () => {
+  const status = document.getElementById("status");
+  const filesDiv = document.getElementById("files");
+  filesDiv.innerHTML = "";
+  try {
+    status.textContent = "Reading files...";
+    const ddFile = document.getElementById("dd").files[0];
+    const nonFile = document.getElementById("nonempty").files[0];
+    const cfgFile = document.getElementById("config").files[0];
+    if (!ddFile || !nonFile || !cfgFile) throw new Error("Select DD.csv, nonempty.json, and config.json.");
+
+    const [ddText, nonText, cfgText] = await Promise.all([ddFile.text(), nonFile.text(), cfgFile.text()]);
+    const cfg = JSON.parse(cfgText);
+    const seedOverride = document.getElementById("seed").value;
+    if (seedOverride !== "") cfg.seed = Number(seedOverride);
+
+    status.textContent = "Validating inputs...";
+    const catalog = parseDD(ddText);
+    const nonempty = JSON.parse(nonText);
+    validateNonempty(nonempty, catalog);
+
+    status.textContent = "Generating clean and dirty populations...";
+    const clean = generateClean(catalog, nonempty.fields, cfg);
+    const dirtyInfo = generateDirty(clean, nonempty.fields, cfg);
+    const dirty = dirtyInfo.records;
+
+    const outputs = {};
+    outputs["population.clean.csv"] = toDelimited(clean, nonempty.fields, ",");
+    outputs["population.dirty.csv"] = toDelimited(dirty, nonempty.fields, ",");
+    outputs["population.clean.tsv"] = toDelimited(clean, nonempty.fields, "\t");
+    outputs["population.dirty.tsv"] = toDelimited(dirty, nonempty.fields, "\t");
+    outputs["population.clean.sql"] = toSql(clean, nonempty.fields, "population_clean");
+    outputs["population.dirty.sql"] = toSql(dirty, nonempty.fields, "population_dirty");
+    outputs["summary.txt"] = buildSummary(cfg, clean, dirty, dirtyInfo.metadata);
+
+    status.textContent = "Building metadata...";
+    const metadata = {
+      GENERATOR_VERSION: VERSION,
+      generatorVersion: VERSION,
+      seed: cfg.seed,
+      inputFileHashes: {
+        "DD.csv": await sha256Hex(ddText),
+        "nonempty.json": await sha256Hex(nonText),
+        "config.json": await sha256Hex(cfgText)
+      },
+      outputFileHashes: {},
+      rowCounts: { clean: clean.length, dirty: dirty.length },
+      scenarioCounts: scenarioCounts(clean),
+      injectedIssueCounts: dirtyInfo.metadata.issueCounts,
+      injectedIssues: dirtyInfo.metadata.summaries.map(s => ({
+        issueType: s.issueType,
+        count: s.actualCount,
+        affectedCustIds: [...s.affectedCustIds].sort()
+      }))
+    };
+    for (const [k, v] of Object.entries(outputs)) metadata.outputFileHashes[k] = await sha256Hex(v);
+    outputs["metadata.json"] = JSON.stringify(sortKeys(metadata), null, 2) + "\n";
+
+    status.textContent = "Creating download links...";
+    Object.entries(outputs).forEach(([name, content]) => {
+      const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      a.textContent = "Download " + name;
+      filesDiv.appendChild(a);
+    });
+    status.textContent = "Done.";
+  } catch (err) {
+    status.textContent = "Error: " + (err && err.message ? err.message : String(err));
+  }
+});
+
+function parseDD(text) {
+  const rows = parseCsv(text);
+  if (rows.length < 2) throw new Error("DD.csv must have header + rows.");
+  const h = rows[0].map(v => v.trim().toLowerCase());
+  const idx = firstIndex(h, ["field", "fieldname", "field_name", "name", "column", "columnname"]);
+  const tdx = firstIndex(h, ["type", "datatype", "data_type"]);
+  const ddx = firstIndex(h, ["description", "desc", "definition"]);
+  if (idx < 0) throw new Error("DD.csv missing field name column.");
+  const fields = [];
+  for (let i = 1; i < rows.length; i++) {
+    const n = (rows[i][idx] || "").trim();
+    if (!n) continue;
+    const d = ddx < 0 ? "" : (rows[i][ddx] || "").trim();
+    fields.push({ name: n, inferredType: inferType(n, tdx < 0 ? "" : (rows[i][tdx] || ""), d), description: d || undefined });
+  }
+  return { fields };
+}
+
+function validateNonempty(nonempty, catalog) {
+  if (!nonempty || !Array.isArray(nonempty.fields) || nonempty.fields.length === 0) throw new Error("nonempty.json invalid.");
+  const seen = new Set();
+  nonempty.fields.forEach(f => { if (seen.has(f)) throw new Error("Duplicate field in nonempty.json: " + f); seen.add(f); });
+  const known = new Set(catalog.fields.map(f => f.name));
+  nonempty.fields.forEach(f => { if (!known.has(f)) throw new Error("Unknown nonempty field: " + f); });
+}
+
+function generateClean(catalog, fields, cfg) {
+  const rng = mulberry32(cfg.seed >>> 0);
+  const plan = scenarioPlan(cfg.rowCount, cfg.scenarioMix || {});
+  const out = [];
+  for (let i = 0; i < plan.length; i++) {
+    const r = {};
+    fields.forEach(f => r[f] = "");
+    set(r, "Cust_ID", "CUST_" + String(i + 1).padStart(7, "0"));
+    set(r, "MSTAT", rng() < 0.5 ? "M" : "S");
+    set(r, "DOB", dateStr(1940 + int(rng, 0, 25), int(rng, 1, 12), int(rng, 1, 28)));
+    set(r, "DOH", addYears(r.DOB || "1960-01-01", int(rng, 18, 30)));
+    set(r, "DOP", addYears(r.DOH || r.DOB || "1980-01-01", int(rng, 0, 20)));
+    set(r, "DOTE", addYears(r.DOP || "2000-01-01", int(rng, 0, 10)));
+    set(r, "DOR", addYears(r.DOP || "2000-01-01", int(rng, 1, 10)));
+    set(r, "DOD", addYears(r.DOR || "2005-01-01", int(rng, 1, 25)));
+    applyScenario(r, plan[i], rng);
+    enforceInvariants(r, fields, rng);
+    applyMissingness(r, fields, cfg.missingnessModel, rng);
+    enforceInvariants(r, fields, rng);
+    out.push(r);
+  }
+  return out;
+}
+
+function applyScenario(r, s, rng) {
+  if (s === "participant_in_pay") { set(r, "ID", "1"); set(r, "RETSTAT", "1"); set(r, "FORM_CODE_ARD", "FORM_STD"); set(r, "LEV_MB_ARD", money(rng)); }
+  if (s === "participant_deferred_vested") { set(r, "ID", "1"); set(r, "RETSTAT", "2"); set(r, "PA_AMB", money(rng)); }
+  if (s === "participant_active_vested") { set(r, "ID", "1"); set(r, "RETSTAT", "3"); set(r, "PA_AMB", money(rng)); }
+  if (s === "participant_not_vested") { set(r, "ID", "1"); set(r, "RETSTAT", "4"); }
+  if (s === "beneficiary_in_pay") { set(r, "ID", "2"); set(r, "RETSTAT", "1"); set(r, "SBCD", "SBCD_BEN"); set(r, "FORM_CODE_ARD", "FORM_STD"); set(r, "LEV_MB_ARD", money(rng)); }
+  if (s === "alternate_payee_in_pay") { set(r, "ID", "4"); set(r, "RETSTAT", "1"); set(r, "FORM_CODE_ARD", "FORM_STD"); set(r, "LEV_MB_ARD", money(rng)); }
+  if (s === "de_minimis_lump_sum") { set(r, "ID", "1"); set(r, "RETSTAT", "1"); set(r, "FORM_CODE_ARD", "FORM_STD"); set(r, "LS_EST_AMT", money(rng, 500, 3000)); set(r, "LS_EST_DATE", addYears(r.DOP || "2000-01-01", 1)); }
+  if (s === "excluded") { set(r, "ID", "1"); set(r, "RETSTAT", "5"); }
+}
+
+function enforceInvariants(r, fields, rng) {
+  if (has(fields, "DOB") && has(fields, "DOH") && r.DOB && r.DOH && !(r.DOB < r.DOH)) r.DOH = addYears(r.DOB, 1);
+  if (has(fields, "DOH") && has(fields, "DOP") && r.DOH && r.DOP && !(r.DOH <= r.DOP)) r.DOP = addYears(r.DOH, 0);
+  if (has(fields, "DOP") && has(fields, "DOTE") && r.DOP && r.DOTE && !(r.DOP <= r.DOTE)) r.DOTE = addYears(r.DOP, 1);
+  if (r.ID === "1" && r.RETSTAT === "1" && has(fields, "DOR") && !r.DOR) r.DOR = addYears(r.DOP || r.DOH || r.DOB || "2000-01-01", 1);
+  if (r.ID === "2") { if (has(fields, "SBCD") && !r.SBCD) r.SBCD = "SBCD_BEN"; if (has(fields, "DOR")) r.DOR = ""; }
+  if (has(fields, "DOR") && has(fields, "DOD") && r.DOR && r.DOD && !(r.DOR < r.DOD)) r.DOD = addYears(r.DOR, 1);
+  if (r.MSTAT === "M") {
+    set(r, "SFNAME", r.SFNAME || token(rng, "SFN"));
+    set(r, "SLNAME", r.SLNAME || token(rng, "SLN"));
+    set(r, "SDOB", r.SDOB || addYears(r.DOB || "1960-01-01", int(rng, -3, 3)));
+  }
+}
+
+function applyMissingness(r, fields, model, rng) {
+  if (!model) return;
+  const required = new Set([...(model.requiredFields || []), "Cust_ID", "ID", "RETSTAT"]);
+  fields.forEach(f => {
+    if (required.has(f)) return;
+    if (!r[f]) return;
+    const rate = clamp((model.fieldRates && typeof model.fieldRates[f] === "number") ? model.fieldRates[f] : (model.defaultRate || 0), 0, 1);
+    if (rng() < rate) r[f] = "";
+  });
+}
+
+function generateDirty(clean, fields, cfg) {
+  const records = clean.map(r => ({ ...r }));
+  const di = (cfg.dirtyInjection || { rates: {} });
+  const types = di.enabledIssueTypes && di.enabledIssueTypes.length ? di.enabledIssueTypes : [
+    "married_missing_sdob","dor_earlier_than_dote","beneficiary_has_dor","payable_missing_form_code_ard"
+  ];
+  const metadata = { issueCounts: {}, summaries: [] };
+  types.forEach(type => {
+    const rate = clamp((di.rates && typeof di.rates[type] === "number") ? di.rates[type] : 0, 0, 1);
+    const cand = candidates(records, type, fields);
+    const target = Math.round(cand.length * rate);
+    const chosen = pickDeterministic(cand, target, cfg.seed, type);
+    const affected = [];
+    chosen.forEach(i => {
+      applyIssue(records[i], type);
+      if (records[i].Cust_ID) affected.push(records[i].Cust_ID);
+    });
+    metadata.issueCounts[type] = chosen.length;
+    metadata.summaries.push({ issueType: type, requestedRate: rate, candidateCount: cand.length, targetCount: target, actualCount: chosen.length, affectedCustIds: affected });
+  });
+  return { records, metadata };
+}
+
+function candidates(records, type, fields) {
+  const hasField = f => fields.includes(f);
+  const out = [];
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    if (type === "married_missing_sdob" && hasField("MSTAT") && hasField("SDOB") && r.MSTAT === "M" && r.SDOB) out.push(i);
+    if (type === "dor_earlier_than_dote" && hasField("DOR") && hasField("DOTE") && r.DOR && r.DOTE) out.push(i);
+    if (type === "beneficiary_has_dor" && hasField("ID") && hasField("DOR") && r.ID === "2") out.push(i);
+    if (type === "payable_missing_form_code_ard" && hasField("RETSTAT") && hasField("FORM_CODE_ARD") && r.RETSTAT === "1" && r.FORM_CODE_ARD) out.push(i);
+  }
+  return out;
+}
+
+function applyIssue(r, type) {
+  if (type === "married_missing_sdob") r.SDOB = "";
+  if (type === "dor_earlier_than_dote" && r.DOTE) r.DOR = addYears(r.DOTE, -1);
+  if (type === "beneficiary_has_dor" && !r.DOR) r.DOR = r.DOTE || "2000-01-01";
+  if (type === "payable_missing_form_code_ard") r.FORM_CODE_ARD = "";
+}
+
+function toDelimited(records, fields, delim) {
+  const esc = (v) => {
+    const s = String(v || "");
+    if (s.includes(delim) || s.includes('"') || s.includes("\n")) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  };
+  const head = fields.map(esc).join(delim);
+  const rows = records.map(r => fields.map(f => esc(r[f] || "")).join(delim));
+  return [head, ...rows].join("\n");
+}
+
+function toSql(records, fields, table) {
+  const create = `CREATE TABLE "${table}" (${fields.map(f => `"${f}" TEXT`).join(", ")});`;
+  const ins = records.map(r => {
+    const vals = fields.map(f => "'" + String(r[f] || "").replace(/'/g, "''") + "'").join(", ");
+    return `INSERT INTO "${table}" (${fields.map(f => `"${f}"`).join(", ")}) VALUES (${vals});`;
+  });
+  return [create, ...ins].join("\n");
+}
+
+function buildSummary(cfg, clean, dirty, meta) {
+  const lines = [];
+  lines.push("CaseWorkbench Mock Population Summary");
+  lines.push("Generator Version: " + VERSION);
+  lines.push("Seed: " + cfg.seed);
+  lines.push("Row Count (Clean): " + clean.length);
+  lines.push("Row Count (Dirty): " + dirty.length);
+  lines.push("");
+  lines.push("Scenario Counts:");
+  const sc = scenarioCounts(clean);
+  Object.keys(sc).sort().forEach(k => lines.push("- " + k + ": " + sc[k]));
+  lines.push("");
+  lines.push("Injected Issue Counts:");
+  meta.summaries.slice().sort((a,b)=>a.issueType.localeCompare(b.issueType)).forEach(s => {
+    lines.push("- " + s.issueType + ": " + s.actualCount);
+    lines.push("  Cust_ID: " + (s.affectedCustIds.length ? s.affectedCustIds.slice().sort().join(", ") : "none"));
+  });
+  return lines.join("\n") + "\n";
+}
+
+function scenarioCounts(records) {
+  const c = {};
+  records.forEach(r => { const s = inferScenario(r); c[s] = (c[s] || 0) + 1; });
+  return Object.keys(c).sort().reduce((a,k)=>{a[k]=c[k];return a;}, {});
+}
+
+function inferScenario(r) {
+  if (r.RETSTAT === "5") return "excluded";
+  if (r.ID === "2") return "beneficiary_in_pay";
+  if (r.ID === "4") return "alternate_payee_in_pay";
+  if (r.ID === "1" && r.LS_EST_AMT && Number(r.LS_EST_AMT) > 0) return "de_minimis_lump_sum";
+  if (r.ID === "1" && r.RETSTAT === "1") return "participant_in_pay";
+  if (r.ID === "1" && r.RETSTAT === "2") return "participant_deferred_vested";
+  if (r.ID === "1" && r.RETSTAT === "3") return "participant_active_vested";
+  if (r.ID === "1" && r.RETSTAT === "4") return "participant_not_vested";
+  return "unknown";
+}
+
+function scenarioPlan(rowCount, mix) {
+  const use = scenarios.filter(s => (mix[s] || 0) > 0);
+  const active = use.length ? use : ["participant_in_pay"];
+  const tot = active.reduce((a,s)=>a+(mix[s]||0),0);
+  if (rowCount <= 0) return [];
+  if (tot <= 0) return Array.from({length: rowCount}, ()=>"participant_in_pay");
+  const counts = active.map(s => { const raw = (mix[s]||0)/tot*rowCount; return { s, c: Math.floor(raw), f: raw - Math.floor(raw) }; });
+  let assigned = counts.reduce((a,x)=>a+x.c,0);
+  counts.slice().sort((a,b)=>b.f-a.f || a.s.localeCompare(b.s)).forEach(x => { if (assigned < rowCount) { counts.find(y=>y.s===x.s).c++; assigned++; } });
+  const plan = [];
+  counts.sort((a,b)=>a.s.localeCompare(b.s)).forEach(x => { for (let i=0;i<x.c;i++) plan.push(x.s); });
+  return plan;
+}
+
+function parseCsv(text) {
+  const s = text.replace(/\r\n/g,"\n").replace(/\r/g,"\n");
+  const out = [];
+  let row = [], cell = "", q = false;
+  for (let i=0;i<s.length;i++) {
+    const ch = s[i];
+    if (q) {
+      if (ch === '"') { if (s[i+1] === '"') { cell += '"'; i++; } else q = false; }
+      else cell += ch;
+      continue;
+    }
+    if (ch === '"') { q = true; continue; }
+    if (ch === ',') { row.push(cell); cell = ""; continue; }
+    if (ch === '\n') { row.push(cell); cell = ""; if (row.some(v=>v.trim()!=="")) out.push(row); row = []; continue; }
+    cell += ch;
+  }
+  row.push(cell);
+  if (row.some(v=>v.trim()!=="")) out.push(row);
+  return out;
+}
+
+function inferType(name, t, d) {
+  const n = String(t || "").trim().toLowerCase();
+  if (["string","text","char","varchar","nvarchar"].includes(n)) return "string";
+  if (["integer","int","bigint","smallint"].includes(n)) return "integer";
+  if (["number","numeric","decimal","float","double","money"].includes(n)) return "number";
+  if (["boolean","bool","bit","yn"].includes(n)) return "boolean";
+  if (["date","datetime","timestamp"].includes(n)) return "date";
+  const h = (name + " " + (d || "")).toLowerCase();
+  if (/(^|[_\s])(dob|doh|dor|dote|dod)([_\s]|$)/.test(h) || /\bdate\b/.test(h)) return "date";
+  if (/\bflag\b/.test(h) || /(^|[_\s])(is|has)_/.test(h)) return "boolean";
+  if (/\b(age|count|num|number|years?)\b/.test(h)) return "integer";
+  if (/\b(amt|amount|balance|pay|benefit|rate)\b/.test(h)) return "number";
+  return "string";
+}
+
+function firstIndex(arr, names) { for (const n of names) { const i = arr.indexOf(n); if (i >= 0) return i; } return -1; }
+function set(r, f, v) { if (Object.prototype.hasOwnProperty.call(r, f)) r[f] = v; }
+function has(arr, x) { return arr.includes(x); }
+function int(rng, a, b) { return Math.floor(rng() * (b - a + 1)) + a; }
+function money(rng, min=1000, max=200000) { return (Math.round((min + rng()*(max-min)) * 100) / 100).toFixed(2); }
+function dateStr(y,m,d){ return String(y).padStart(4,"0")+"-"+String(m).padStart(2,"0")+"-"+String(d).padStart(2,"0"); }
+function addYears(date, years){ const [y,m,d]=String(date).split("-").map(Number); return dateStr(y+years,m,d); }
+function token(rng,p){ const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"; let s=""; for(let i=0;i<8;i++) s+=chars[int(rng,0,chars.length-1)]; return p+"_"+s; }
+function clamp(v,a,b){ return Math.max(a,Math.min(b,Number.isFinite(v)?v:a)); }
+function sortKeys(obj){ if(Array.isArray(obj)) return obj.map(sortKeys); if(obj&&typeof obj==="object"){const o={}; Object.keys(obj).sort().forEach(k=>o[k]=sortKeys(obj[k])); return o;} return obj; }
+async function sha256Hex(text){ const buf = new TextEncoder().encode(String(text)); const digest = await crypto.subtle.digest("SHA-256", buf); return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,"0")).join(""); }
+function pickDeterministic(cands,target,seed,type){ if(target<=0||!cands.length) return []; return cands.map(i=>({i,s:score(seed,type,i)})).sort((a,b)=>a.s-b.s||a.i-b.i).slice(0,Math.min(target,cands.length)).map(x=>x.i); }
+function score(seed,type,i){ let v=(seed|0)^hash(type)^i; v=Math.imul(v^(v>>>16),0x45d9f3b); v=Math.imul(v^(v>>>16),0x45d9f3b); v=v^(v>>>16); return Math.abs(v); }
+function hash(s){ let h=2166136261; for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h,16777619); } return h; }
+function mulberry32(a){ return function(){ let t=a+=0x6D2B79F5; t=Math.imul(t^t>>>15,t|1); t^=t+Math.imul(t^t>>>7,t|61); return ((t^t>>>14)>>>0)/4294967296; }; }
+</script>
+</body>
+</html>
